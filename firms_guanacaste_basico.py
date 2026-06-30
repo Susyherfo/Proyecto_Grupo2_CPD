@@ -91,7 +91,7 @@ def generar_ventanas(fecha_inicio: date, fecha_fin: date, paso: int = MAX_DAY_RA
 
 def main():
     fecha_inicio = date(2023, 1, 1)
-    fecha_fin = date(2023, 1, 31)  # rango corto de prueba; luego se amplia
+    fecha_fin = date(2023, 12, 31)  # todo el año, para comparar con el paralelo
 
     ventanas = generar_ventanas(fecha_inicio, fecha_fin)
     print(f"Se descargaran {len(ventanas)} ventanas de {MAX_DAY_RANGE} dias cada una "
