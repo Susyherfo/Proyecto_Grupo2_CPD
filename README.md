@@ -1,98 +1,175 @@
-# Extracción de Focos Activos — Guanacaste, Costa Rica (NASA FIRMS)
+# Pipeline de Datos — Detección y Predicción de Incendios en Guanacaste, Costa Rica
 
-Pipeline de adquisición **paralela** de datos de focos activos MODIS/VIIRS para la provincia de Guanacaste, Costa Rica, usando directamente la **FIRMS Area API** de la NASA. No se descarga ningún archivo crudo del repositorio NRT: toda la extracción ocurre mediante peticiones HTTP a la API, que ya filtra por bounding box y rango de fechas del lado del servidor.
+Pipeline de adquisición y procesamiento de datos satelitales para la provincia de Guanacaste, Costa Rica, orientado a la predicción de propagación de incendios forestales al día siguiente. Utiliza herramientas de **computación paralela y distribuida** en Python como `ThreadPoolExecutor` y `rioxarray` con Dask.
 
-El proyecto incluye además un **benchmark de rendimiento** que compara la versión secuencial contra la paralela y mide el *speedup* al variar el número de hilos, que es el objetivo central del curso.
+Forma parte del proyecto de curso *Exploración de Herramientas Paralelas y Distribuidas para el Análisis de Datos en Python* — Universidad LEAD.
 
-Forma parte del proyecto de curso *Exploración de Herramientas Paralelas y Distribuidas para el Análisis de Datos en Python*.
+---
 
 ## Contenido
 
 | Archivo | Descripción |
 |---|---|
-| `firms_guanacaste_basico.py` | Versión **secuencial**. Punto de partida para validar que la conexión y el MAP_KEY funcionan. |
-| `firms_guanacaste_paralelo.py` | Versión **paralela** con `ThreadPoolExecutor`. Para descargar rangos largos de forma eficiente. |
-| `firms_guanacaste_benchmark.py` | **Benchmark** de rendimiento: mide el tiempo del mismo rango variando el número de hilos (1, 2, 4, 8, 16) y genera una tabla y una gráfica de *speedup*. Promedia varias corridas y se detiene solo al llegar al punto de rendimientos decrecientes. |
+| `firms_guanacaste_basico.py` | Extracción **secuencial** de focos activos MODIS/VIIRS vía FIRMS Area API. Punto de partida para validar conexión y MAP_KEY. |
+| `firms_guanacaste_paralelo.py` | Extracción **paralela** con `ThreadPoolExecutor`. Para rangos largos (varios años) de forma eficiente. |
+| `firms_guanacaste_benchmark.py` | **Benchmark** de rendimiento: mide tiempo, *speedup* y eficiencia variando el número de hilos (1, 2, 4, 8). Genera tabla CSV y gráfica PNG. |
+| `ndvi_stream_cog.py` | Extracción **paralela** de índice de vegetación NDVI (MOD13A2) desde AppEEARS vía bundle API, sin descargar archivos a disco. Fusiona 2 tiles por fecha y genera serie temporal CSV. |
+| `ndvi_guanacaste_serie_temporal.csv` | Serie temporal de NDVI para Guanacaste: 595 fechas, febrero 2000 – diciembre 2025, una observación cada 16 días. |
+| `guanacaste.geojson` | Bounding box de la provincia de Guanacaste usado para filtrar todas las fuentes de datos. |
+| `urls_ndvi.txt` | URLs de los 595 GeoTIFF de NDVI del bundle de AppEEARS (generado automáticamente). |
 | `requirements.txt` | Dependencias del proyecto. |
+
+---
+
+## Fuentes de datos
+
+| Fuente | Dato | Período | Acceso |
+|---|---|---|---|
+| NASA FIRMS API | Focos activos MODIS/VIIRS | 2000–presente | MAP_KEY gratuito |
+| NASA AppEEARS | NDVI MOD13A2 (cada 16 días) | 2000–2025 | Earthdata Login gratuito |
+| Copernicus CDS | ERA5: temperatura, lluvia, viento | Pendiente | Cuenta CDS gratuita |
+| OpenTopography | DEM SRTM 30m | Estático | API Key gratuita |
+
+---
+
+## Estado del pipeline
+
+```
+Paso 1 ✅  Focos activos FIRMS (secuencial + paralelo + benchmark)
+Paso 2 ✅  NDVI serie temporal 2000-2025 (595 fechas, AppEEARS)
+Paso 3 ⬜  ERA5 clima (temperatura, lluvia, viento)
+Paso 4 ⬜  Integración de fuentes en dataset unificado por fecha
+Paso 5 ⬜  Construcción de variable target (focos día siguiente)
+Paso 6 ⬜  Entrenamiento del modelo (CNN / XGBoost)
+Paso 7 ⬜  Dashboard / mapa interactivo
+```
+
+---
 
 ## 1. Requisitos previos
 
 - Python 3.10 o superior.
-- Una cuenta de correo para solicitar el `MAP_KEY` (gratuito, no requiere Earthdata Login).
+- Cuenta de correo para el MAP_KEY de FIRMS (gratuito).
+- Cuenta Earthdata Login para AppEEARS (gratuita).
+
+---
 
 ## 2. Instalación
 
-Con el entorno virtual activado (`.venv`), instala las dependencias:
-
 ```bash
+git clone <url-del-repositorio>
+cd Proyecto_Grupo2_CPD
+python -m venv .venv
+
+# Windows
+.venv\Scripts\activate
+
+# macOS / Linux
+source .venv/bin/activate
+
 pip install -r requirements.txt
+pip install matplotlib rioxarray rasterio
 ```
 
-El benchmark requiere además `matplotlib` para generar la gráfica:
+---
 
-```bash
-pip install matplotlib
-```
+## 3. Credenciales necesarias
 
-## 3. Obtener el MAP_KEY de FIRMS
+### FIRMS MAP_KEY (para focos activos)
+1. Ir a https://firms.modaps.eosdis.nasa.gov/api/area/
+2. Click en **Get MAP_KEY** e ingresar un correo — llega al instante.
 
-1. Ir a [https://firms.modaps.eosdis.nasa.gov/api/area/](https://firms.modaps.eosdis.nasa.gov/api/area/)
-2. Hacer clic en **Get MAP_KEY**, ingresar un correo y enviarlo.
-3. El key llega casi al instante al correo indicado.
-
-Para consultar cuántas transacciones quedan disponibles:
-
-```
-https://firms.modaps.eosdis.nasa.gov/mapserver/mapkey_status/?MAP_KEY=tu_map_key_aqui
-```
-
-## 4. Configurar el MAP_KEY como variable de entorno
-
-**Windows (PowerShell)** — solo para la sesión actual:
-
+**Windows (PowerShell):**
 ```powershell
 $env:FIRMS_MAP_KEY = "tu_map_key_aqui"
 ```
 
-**macOS / Linux (bash/zsh)**:
-
+**macOS / Linux:**
 ```bash
 export FIRMS_MAP_KEY="tu_map_key_aqui"
 ```
 
-> **Nota de seguridad:** el `MAP_KEY` es de uso gratuito, pero evita subirlo a un repositorio público. No lo escribas directamente en el código; siempre como variable de entorno.
-
-## 5. Uso
-
-### Paso 1 — validar la conexión (versión secuencial)
-
-```bash
-python3 firms_guanacaste_basico.py
+### Earthdata Login (para NDVI AppEEARS)
+1. Registrarse en https://urs.earthdata.nasa.gov/users/new
+2. Usar las mismas credenciales en `ndvi_stream_cog.py`:
+```python
+EARTHDATA_USER = "tu_usuario"
+EARTHDATA_PASS = "tu_contraseña"
 ```
 
-Si todo está bien, se genera `focos_guanacaste.csv`.
+> **Seguridad:** nunca subas MAP_KEY ni contraseñas directamente en el código. Usá variables de entorno o un archivo `.env` excluido del repositorio.
 
-### Paso 2 — descarga del histórico (versión paralela)
+---
 
-Edita las fechas `fecha_inicio` y `fecha_fin` dentro de `main()` según el rango deseado, y corre:
+## 4. Uso
 
+### Paso 1 — Validar conexión FIRMS (secuencial)
 ```bash
-python3 firms_guanacaste_paralelo.py
+py firms_guanacaste_basico.py
+```
+Genera `focos_guanacaste.csv` con los focos activos del rango configurado.
+
+### Paso 2 — Descarga histórica FIRMS (paralela)
+Editá `fecha_inicio` y `fecha_fin` en `main()` según el rango deseado:
+```bash
+py firms_guanacaste_paralelo.py
+```
+Genera `focos_guanacaste_2023.csv`.
+
+### Paso 3 — Benchmark de rendimiento FIRMS
+```bash
+py firms_guanacaste_benchmark.py
+```
+Genera `benchmark_resultados.csv` y `benchmark_speedup.png`.
+
+> **Límite de la API:** 5000 transacciones cada 10 minutos. Para el benchmark, usar un rango corto (un trimestre) para no agotar la cuota.
+
+### Paso 4 — Extracción NDVI desde AppEEARS
+Requiere haber generado `urls_ndvi.txt` previamente (ver sección 5). Luego:
+```bash
+py ndvi_stream_cog.py
+```
+Genera `ndvi_guanacaste_serie_temporal.csv` con 595 fechas (2000–2025).
+
+---
+
+## 5. Generar urls_ndvi.txt (primera vez)
+
+Si `urls_ndvi.txt` no existe, corré este script una sola vez para obtener las URLs del bundle de AppEEARS:
+
+```python
+import requests, json
+
+usuario  = "tu_usuario_earthdata"
+password = "tu_contraseña_earthdata"
+task_id  = "044bcf2a-abc5-4a2e-97be-2bf436a160cc"
+
+token = requests.post(
+    "https://appeears.earthdatacloud.nasa.gov/api/login",
+    auth=(usuario, password)
+).json()["token"]
+
+archivos = requests.get(
+    f"https://appeears.earthdatacloud.nasa.gov/api/bundle/{task_id}",
+    headers={"Authorization": f"Bearer {token}"}
+).json()["files"]
+
+with open("urls_ndvi.txt", "w") as f:
+    for a in archivos:
+        if a["file_name"].endswith(".tif") and "NDVI" in a["file_name"]:
+            file_id = a["file_id"]
+            f.write(
+                f"https://appeears.earthdatacloud.nasa.gov"
+                f"/api/bundle/{task_id}/{file_id}\n"
+            )
+print("urls_ndvi.txt generado.")
 ```
 
-### Paso 3 — benchmark de rendimiento
-
-```bash
-python3 firms_guanacaste_benchmark.py
-```
-
-Salidas: `benchmark_resultados.csv` (tabla con tiempo, *speedup* y eficiencia) y `benchmark_speedup.png` (gráfica de dos paneles).
-
-> **Importante — límite de la API.** El `MAP_KEY` permite **5000 transacciones cada 10 minutos**. El benchmark multiplica las peticiones (ventanas × hilos × repeticiones), así que correr el **año completo varias veces seguidas agota la cuota** y la API responde `400 Bad Request`. Para iterar sin chocar con el límite, se recomienda usar un **rango corto** (un mes o un trimestre) ajustando `FECHA_FIN`. Si aparece el error 400, espera ~10 minutos a que el contador se reinicie.
+---
 
 ## 6. Resultados de referencia
 
-Ejecución de prueba sobre el **primer trimestre de 2023** (~18 ventanas), con 3 repeticiones promediadas, en un MacBook Pro. Los tiempos absolutos dependen de la red y la máquina; lo relevante es la tendencia:
+### FIRMS — Benchmark de speedup (año 2023, 73 ventanas)
 
 | Hilos | Speedup | Eficiencia |
 |---|---|---|
@@ -100,49 +177,64 @@ Ejecución de prueba sobre el **primer trimestre de 2023** (~18 ventanas), con 3
 | 2 | 2.5× | — |
 | 4 | 4.8× | — |
 | 8 | **8.0×** | 1.00 |
-| 16 | 9.7× | 0.61 |
 
-La extracción es una tarea **I/O-bound** (el tiempo se gasta esperando la respuesta de la red, no en cómputo de CPU). Por eso `ThreadPoolExecutor` es la herramienta apropiada y el *speedup* escala casi linealmente hasta **8 hilos** (punto óptimo, eficiencia ≈ 1.0). A partir de ahí la eficiencia **cae** (0.61 con 16 hilos): hay más hilos que ventanas por descargar y la red se satura, evidenciando los **rendimientos decrecientes**. Todas las configuraciones producen el mismo número de registros, confirmando que la paralelización no altera el resultado, solo la velocidad.
+La tarea es **I/O-bound** (espera de red), por lo que `ThreadPoolExecutor` escala casi linealmente. A partir de 8 hilos la eficiencia cae por saturación de red (rendimientos decrecientes).
 
-> Nota: pequeñas variaciones de red pueden producir eficiencias ligeramente superiores a 1 en corridas individuales; promediar varias repeticiones (`REPETICIONES = 3`) reduce ese ruido.
+### NDVI AppEEARS — Serie temporal generada
+
+| Métrica | Valor |
+|---|---|
+| Fechas cubiertas | Feb 2000 – Dic 2025 |
+| Total de observaciones | 595 |
+| Frecuencia | Cada 16 días |
+| NDVI medio histórico (Guanacaste) | 0.619 |
+| Píxeles válidos por fecha | ~24,000 |
+| Nulos | 0 |
+
+---
 
 ## 7. Parámetros configurables
 
-**Extracción** (`firms_guanacaste_basico.py` / `firms_guanacaste_paralelo.py`):
+### firms_guanacaste_paralelo.py
 
 | Variable | Descripción | Valor por defecto |
 |---|---|---|
-| `GUANACASTE_BBOX` | Bounding box `west,south,east,north` | `-86.0,9.9,-84.6,11.3` (aproximado) |
-| `SOURCE` | `MODIS_SP` (calidad científica, 2-3 meses de rezago) o `MODIS_NRT` (últimos ~2 meses) | `MODIS_SP` |
-| `MAX_WORKERS` | Número de hilos concurrentes (versión paralela) | `8` |
-| `MAX_RETRIES` | Reintentos ante errores de red transitorios | `3` |
+| `GUANACASTE_BBOX` | Bounding box `west,south,east,north` | `-86.4,9.5,-84.6,11.3` |
+| `SOURCE` | `MODIS_SP` (calidad científica) o `MODIS_NRT` (tiempo real) | `MODIS_SP` |
+| `MAX_WORKERS` | Hilos concurrentes | `8` |
+| `MAX_RETRIES` | Reintentos ante errores de red | `3` |
 
-**Benchmark** (`firms_guanacaste_benchmark.py`):
+### ndvi_stream_cog.py
 
-| Variable | Descripción | Valor recomendado |
+| Variable | Descripción | Valor por defecto |
 |---|---|---|
-| `FECHA_INICIO` / `FECHA_FIN` | Rango de fechas a descargar en cada prueba | un trimestre (ej. `2023-01-01` a `2023-03-31`) |
-| `LISTA_HILOS` | Configuraciones de hilos a comparar | `[1, 2, 4, 8, 16]` |
-| `REPETICIONES` | Corridas por configuración (se promedian para reducir ruido) | `3` |
-| `UMBRAL_MEJORA` | Si agregar hilos mejora menos que este porcentaje, el benchmark se detiene | `0.10` (10%) |
+| `MAX_WORKERS` | Hilos concurrentes para descarga de tiles | `4` |
+| `NDVI_SCALE` | Factor de escala oficial MOD13A2 | `0.0001` |
+| `TASK_ID` | ID del request en AppEEARS | `044bcf2a-...` |
 
-> El bounding box actual es un rectángulo aproximado de Guanacaste. Para un recorte más preciso al polígono provincial real, se recomienda agregar un paso posterior de filtrado espacial con `geopandas`/`shapely`.
+---
 
-## 8. Límites de la API
+## 8. Estructura del repositorio
 
-- Máximo **5 días por solicitud** (`DAY_RANGE`); los rangos largos se trocean en ventanas de 5 días.
-- Máximo **5000 transacciones cada 10 minutos** por MAP_KEY.
-- Documentación oficial: [https://firms.modaps.eosdis.nasa.gov/api/area/](https://firms.modaps.eosdis.nasa.gov/api/area/)
-
-## 9. Reproducibilidad
-
-```bash
-git clone <url-del-repositorio>
-cd Proyecto_Grupo2_CPD
-python -m venv .venv
-source .venv/bin/activate        # macOS / Linux
-pip install -r requirements.txt
-export FIRMS_MAP_KEY="tu_map_key_aqui"
-python3 firms_guanacaste_basico.py
-python3 firms_guanacaste_benchmark.py
 ```
+Proyecto_Grupo2_CPD/
+├── firms_guanacaste_basico.py
+├── firms_guanacaste_paralelo.py
+├── firms_guanacaste_benchmark.py
+├── ndvi_stream_cog.py
+├── ndvi_guanacaste_serie_temporal.csv
+├── guanacaste.geojson
+├── urls_ndvi.txt
+├── requirements.txt
+└── README.md
+```
+
+---
+
+## 9. Límites de APIs
+
+| API | Límite |
+|---|---|
+| FIRMS Area API | 5000 transacciones / 10 minutos por MAP_KEY |
+| FIRMS por request | Máximo 5 días por llamada |
+| AppEEARS bundle | Sin límite de descarga, requiere autenticación Bearer |
