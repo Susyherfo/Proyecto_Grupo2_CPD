@@ -1,2 +1,24 @@
+# API y descarga de datos
 requests>=2.31.0
+
+# Datos tabulares
 pandas>=2.0.0
+
+# Datos geoespaciales raster
+rioxarray>=0.15.0
+rasterio>=1.3.0
+
+# Datos geoespaciales vectoriales
+geopandas>=0.14.0
+
+# Cómputo numérico
+numpy>=1.24.0
+
+# Descarga AWS S3 (ESA WorldCover)
+boto3>=1.34.0
+
+# Visualización (benchmark)
+matplotlib>=3.7.0
+
+# Barras de progreso
+tqdm>=4.66.0

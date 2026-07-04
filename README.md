@@ -14,7 +14,12 @@ Forma parte del proyecto de curso *Exploración de Herramientas Paralelas y Dist
 | `firms_guanacaste_paralelo.py` | Extracción **paralela** con `ThreadPoolExecutor`. Para rangos largos (varios años) de forma eficiente. |
 | `firms_guanacaste_benchmark.py` | **Benchmark** de rendimiento: mide tiempo, *speedup* y eficiencia variando el número de hilos (1, 2, 4, 8). Genera tabla CSV y gráfica PNG. |
 | `ndvi_stream_cog.py` | Extracción **paralela** de índice de vegetación NDVI (MOD13A2) desde AppEEARS vía bundle API, sin descargar archivos a disco. Fusiona 2 tiles por fecha y genera serie temporal CSV. |
+| `worldcover_guanacaste.py` | Descarga los tiles de **ESA WorldCover 2021** (cobertura del suelo a 10m) que cubren Guanacaste desde el bucket S3 público de ESA. Sin registro ni API key. |
+| `extraer_worldcover.py` | Extrae la clase de cobertura del suelo para cada foco activo del dataset, cruzando coordenadas lat/lon con el GeoTIFF de WorldCover. |
+| `limpiar_dataset.py` | Limpia el dataset eliminando registros del 2026 y filas con NDVI nulo. |
 | `ndvi_guanacaste_serie_temporal.csv` | Serie temporal de NDVI para Guanacaste: 595 fechas, febrero 2000 – diciembre 2025, una observación cada 16 días. |
+| `focos_guanacaste_ndvi_limpio.csv` | Dataset limpio de focos activos + NDVI (2002–2025, sin nulos). |
+| `focos_guanacaste_ndvi_worldcover.csv` | Dataset final con focos activos + NDVI + cobertura del suelo WorldCover. |
 | `guanacaste.geojson` | Bounding box de la provincia de Guanacaste usado para filtrar todas las fuentes de datos. |
 | `urls_ndvi.txt` | URLs de los 595 GeoTIFF de NDVI del bundle de AppEEARS (generado automáticamente). |
 | `requirements.txt` | Dependencias del proyecto. |
@@ -25,10 +30,11 @@ Forma parte del proyecto de curso *Exploración de Herramientas Paralelas y Dist
 
 | Fuente | Dato | Período | Acceso |
 |---|---|---|---|
-| NASA FIRMS API | Focos activos MODIS/VIIRS | 2000–presente | MAP_KEY gratuito |
+| NASA FIRMS API | Focos activos MODIS/VIIRS | 2002–2025 | MAP_KEY gratuito |
 | NASA AppEEARS | NDVI MOD13A2 (cada 16 días) | 2000–2025 | Earthdata Login gratuito |
-| Copernicus CDS | ERA5: temperatura, lluvia, viento | Pendiente | Cuenta CDS gratuita |
-| OpenTopography | DEM SRTM 30m | Estático | API Key gratuita |
+| ESA WorldCover | Cobertura del suelo 10m | 2021 (estático) | S3 público, sin registro |
+| Copernicus CDS | ERA5: temperatura, lluvia, viento | Pendiente (compañero) | Cuenta CDS gratuita |
+| OpenTopography | DEM SRTM 30m | Estático (compañero) | API Key gratuita |
 
 ---
 
@@ -37,11 +43,14 @@ Forma parte del proyecto de curso *Exploración de Herramientas Paralelas y Dist
 ```
 Paso 1 ✅  Focos activos FIRMS (secuencial + paralelo + benchmark)
 Paso 2 ✅  NDVI serie temporal 2000-2025 (595 fechas, AppEEARS)
-Paso 3 ⬜  ERA5 clima (temperatura, lluvia, viento)
-Paso 4 ⬜  Integración de fuentes en dataset unificado por fecha
-Paso 5 ⬜  Construcción de variable target (focos día siguiente)
-Paso 6 ⬜  Entrenamiento del modelo (CNN / XGBoost)
-Paso 7 ⬜  Dashboard / mapa interactivo
+Paso 3 ✅  Cobertura del suelo (ESA WorldCover 2021, tile N09W087)
+Paso 4 ✅  Limpieza del dataset (sin 2026, sin nulos)
+Paso 5 ⬜  ERA5 clima (temperatura, lluvia, viento) — compañero
+Paso 6 ⬜  DEM topografía — compañero
+Paso 7 ⬜  Integración de fuentes en dataset unificado
+Paso 8 ⬜  Construcción de variable target (focos día siguiente)
+Paso 9 ⬜  Entrenamiento del modelo (CNN / XGBoost)
+Paso 10 ⬜  Dashboard / mapa interactivo
 ```
 
 ---
@@ -68,7 +77,6 @@ python -m venv .venv
 source .venv/bin/activate
 
 pip install -r requirements.txt
-pip install matplotlib rioxarray rasterio
 ```
 
 ---
@@ -101,7 +109,7 @@ EARTHDATA_PASS = "tu_contraseña"
 
 ---
 
-## 4. Uso
+## 4. Uso — orden de ejecución
 
 ### Paso 1 — Validar conexión FIRMS (secuencial)
 ```bash
@@ -131,6 +139,24 @@ py ndvi_stream_cog.py
 ```
 Genera `ndvi_guanacaste_serie_temporal.csv` con 595 fechas (2000–2025).
 
+### Paso 5 — Limpiar el dataset
+```bash
+py limpiar_dataset.py
+```
+Genera `focos_guanacaste_ndvi_limpio.csv` sin registros del 2026 ni nulos de NDVI.
+
+### Paso 6 — Descargar ESA WorldCover
+```bash
+py worldcover_guanacaste.py
+```
+Descarga los tiles GeoTIFF de cobertura del suelo en `data/worldcover/`. No requiere registro.
+
+### Paso 7 — Extraer cobertura del suelo
+```bash
+py extraer_worldcover.py
+```
+Genera `focos_guanacaste_ndvi_worldcover.csv` con la clase de cobertura del suelo para cada foco activo.
+
 ---
 
 ## 5. Generar urls_ndvi.txt (primera vez)
@@ -138,7 +164,7 @@ Genera `ndvi_guanacaste_serie_temporal.csv` con 595 fechas (2000–2025).
 Si `urls_ndvi.txt` no existe, corré este script una sola vez para obtener las URLs del bundle de AppEEARS:
 
 ```python
-import requests, json
+import requests
 
 usuario  = "tu_usuario_earthdata"
 password = "tu_contraseña_earthdata"
@@ -191,6 +217,25 @@ La tarea es **I/O-bound** (espera de red), por lo que `ThreadPoolExecutor` escal
 | Píxeles válidos por fecha | ~24,000 |
 | Nulos | 0 |
 
+### ESA WorldCover — Distribución de focos por cobertura
+
+| Clase | Focos | Porcentaje |
+|---|---|---|
+| Tree cover (bosque) | 11,266 | 50.2% |
+| Grassland (pastizal) | 7,360 | 32.8% |
+| Cropland (cultivos) | 3,043 | 13.6% |
+| Built-up (urbano) | 417 | 1.9% |
+| Otros | 348 | 1.5% |
+
+### Dataset final actual
+
+| Métrica | Valor |
+|---|---|
+| Registros totales | 22,434 |
+| Período cubierto | 2002–2025 |
+| Columnas | 24 (lat, lon, fecha, brillo, FRP, confianza, NDVI, cobertura...) |
+| Nulos | 0 |
+
 ---
 
 ## 7. Parámetros configurables
@@ -212,16 +257,32 @@ La tarea es **I/O-bound** (espera de red), por lo que `ThreadPoolExecutor` escal
 | `NDVI_SCALE` | Factor de escala oficial MOD13A2 | `0.0001` |
 | `TASK_ID` | ID del request en AppEEARS | `044bcf2a-...` |
 
+### extraer_worldcover.py
+
+| Variable | Descripción | Valor por defecto |
+|---|---|---|
+| `INPUT_CSV` | Dataset de entrada | `focos_guanacaste_ndvi_limpio.csv` |
+| `WORLDCOVER` | Ruta al tile GeoTIFF | `data/worldcover/ESA_WorldCover_10m_2021_v200_N09W087_Map.tif` |
+| `OUTPUT_CSV` | Dataset de salida | `focos_guanacaste_ndvi_worldcover.csv` |
+
 ---
 
 ## 8. Estructura del repositorio
 
 ```
 Proyecto_Grupo2_CPD/
+├── data/
+│   └── worldcover/
+│       └── ESA_WorldCover_10m_2021_v200_N09W087_Map.tif
 ├── firms_guanacaste_basico.py
 ├── firms_guanacaste_paralelo.py
 ├── firms_guanacaste_benchmark.py
 ├── ndvi_stream_cog.py
+├── worldcover_guanacaste.py
+├── extraer_worldcover.py
+├── limpiar_dataset.py
+├── focos_guanacaste_ndvi_limpio.csv
+├── focos_guanacaste_ndvi_worldcover.csv
 ├── ndvi_guanacaste_serie_temporal.csv
 ├── guanacaste.geojson
 ├── urls_ndvi.txt
@@ -238,3 +299,4 @@ Proyecto_Grupo2_CPD/
 | FIRMS Area API | 5000 transacciones / 10 minutos por MAP_KEY |
 | FIRMS por request | Máximo 5 días por llamada |
 | AppEEARS bundle | Sin límite de descarga, requiere autenticación Bearer |
+| ESA WorldCover S3 | Sin límite, acceso público sin registro |
