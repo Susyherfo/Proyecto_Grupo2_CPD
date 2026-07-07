@@ -1,3 +1,10 @@
 .venv/
 __pycache__/
 focos_guanacaste*.csv
+data/worldcover/*.tif
+data/worldcover/*.tiff
+*.csv
+__pycache__/
+.venv/
+*.png
+urls_ndvi.txt
