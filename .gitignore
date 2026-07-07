@@ -9,3 +9,15 @@ __pycache__/
 *.png
 urls_ndvi.txt
 
+
+# --- Datos pesados (NO subir a git; van por Drive/cluster) ---
+*.nc
+*.tif
+dataset_*.csv
+focos_*.csv
+worldcover_*.csv
+ndvi_*.csv
+data/
+.DS_Store
+.venv/
+__pycache__/
