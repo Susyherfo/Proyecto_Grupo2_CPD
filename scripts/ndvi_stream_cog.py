@@ -1,8 +1,12 @@
 """
 ndvi_stream_cog.py
 
-Lee los GeoTIFF de NDVI de AppEEARS directamente desde la nube,
-sin mantener archivos temporales abiertos (fix para WinError 32).
+Lee los GeoTIFF de NDVI de AppEEARS directamente desde la nube
+para Centroamerica completa (2002-2026), sin descargar archivos
+a disco permanentemente.
+
+Cada fecha puede tener multiples tiles que se fusionan antes
+de calcular las estadisticas de NDVI.
 
 Requisitos:
     pip install rioxarray rasterio dask xarray requests numpy pandas
@@ -20,12 +24,13 @@ from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ----------------------------------------------------------------
-# Configuración
+# Configuracion
 # ----------------------------------------------------------------
-EARTHDATA_USER = "usuario" # pedirlo a susana
-EARTHDATA_PASS = "contraseña" #pedirlo a susana
-TASK_ID        = "044bcf2a-abc5-4a2e-97be-2bf436a160cc"
-URLS_FILE      = "urls_ndvi.txt"
+EARTHDATA_USER = "susyherfo"
+EARTHDATA_PASS = "Sehffhes2008*"
+TASK_ID        = "7d3492cd-2264-4bcf-86dd-0edd0f0d5855"
+URLS_FILE      = "urls_ndvi_centroamerica.txt"
+OUTPUT_CSV     = "ndvi_centroamerica_serie_temporal.csv"
 MAX_WORKERS    = 4
 NDVI_SCALE     = 0.0001
 
@@ -49,6 +54,7 @@ def obtener_token(usuario: str, password: str) -> str:
 # ----------------------------------------------------------------
 def leer_urls(ruta: str) -> list[str]:
     with open(ruta) as f:
+        # Strip maneja tanto \n como \r\n (Windows)
         urls = [l.strip() for l in f if l.strip()]
     print(f"URLs cargadas: {len(urls)}")
     return urls
@@ -77,7 +83,7 @@ def agrupar_por_fecha(urls: list[str], token: str) -> dict:
             )
             id_a_nombre[url_archivo] = f["file_name"]
 
-    # Agrupar por DOY
+    # Agrupar por DOY (año + dia del año)
     grupos: dict[str, list] = {}
     for url in urls:
         filename = id_a_nombre.get(url, "")
@@ -88,48 +94,36 @@ def agrupar_por_fecha(urls: list[str], token: str) -> dict:
                 grupos[doy_key] = []
             grupos[doy_key].append((url, filename))
 
-    print(f"Fechas únicas encontradas: {len(grupos)}")
+    print(f"Fechas unicas encontradas: {len(grupos)}")
+    print(f"Tiles promedio por fecha:  "
+          f"{sum(len(v) for v in grupos.values()) / len(grupos):.1f}")
     return grupos
 
 
 # ----------------------------------------------------------------
-# Descargar tile a numpy array (sin dejar handle abierto)
+# Descargar tile a numpy array sin dejar handle abierto (fix Windows)
 # ----------------------------------------------------------------
-def descargar_tile_a_numpy(url: str, filename: str, token: str) -> np.ndarray | None:
-    """
-    Descarga el .tif, lo lee completamente en un numpy array,
-    cierra todos los handles y borra el temporal.
-    Usando rasterio con context manager garantiza cierre en Windows.
-    """
+def descargar_tile_a_numpy(url: str, filename: str,
+                           token: str) -> np.ndarray | None:
     headers = {"Authorization": f"Bearer {token}"}
     tmp_path = None
-
     try:
         r = requests.get(url, headers=headers, stream=True, timeout=120)
         r.raise_for_status()
 
-        # Escribir a temporal
         with tempfile.NamedTemporaryFile(suffix=".tif", delete=False) as tmp:
             tmp_path = tmp.name
             for chunk in r.iter_content(chunk_size=65536):
                 tmp.write(chunk)
-        # El with cierra el handle de escritura aquí
 
-        # Leer con rasterio usando context manager —
-        # el with garantiza que el handle se cierra ANTES de salir del bloque,
-        # incluso en Windows, a diferencia de rioxarray que puede retener el handle
         with rasterio.open(tmp_path) as src:
             data = src.read(1).astype("float32")
             nodata = src.nodata
 
-        # Convertir nodata a NaN
         if nodata is not None:
             data[data == nodata] = np.nan
 
-        # Forzar recolección de basura para liberar cualquier ref residual
         gc.collect()
-
-        # Ahora sí se puede borrar en Windows
         os.unlink(tmp_path)
         return data
 
@@ -145,11 +139,11 @@ def descargar_tile_a_numpy(url: str, filename: str, token: str) -> np.ndarray | 
 
 
 # ----------------------------------------------------------------
-# Procesar una fecha (fusionar tiles y calcular estadísticas)
+# Procesar una fecha (todos sus tiles -> estadisticas NDVI)
 # ----------------------------------------------------------------
-def procesar_fecha(doy_key: str, tiles: list[tuple], token: str) -> dict | None:
+def procesar_fecha(doy_key: str, tiles: list[tuple],
+                   token: str) -> dict | None:
     arrays = []
-
     for url, filename in tiles:
         arr = descargar_tile_a_numpy(url, filename, token)
         if arr is not None:
@@ -158,10 +152,10 @@ def procesar_fecha(doy_key: str, tiles: list[tuple], token: str) -> dict | None:
     if not arrays:
         return None
 
-    # Fusionar tiles: si hay 2, concatenar y aplanar
+    # Combinar todos los tiles de esta fecha
     combinado = np.concatenate([a.flatten() for a in arrays])
 
-    # Aplicar escala MODIS y filtrar valores fuera de rango
+    # Aplicar escala y filtrar valores validos
     ndvi = combinado * NDVI_SCALE
     validos = ndvi[(ndvi >= -0.2) & (ndvi <= 1.0) & ~np.isnan(ndvi)]
 
@@ -180,6 +174,7 @@ def procesar_fecha(doy_key: str, tiles: list[tuple], token: str) -> dict | None:
         "ndvi_min":        round(float(np.min(validos)),    4),
         "ndvi_max":        round(float(np.max(validos)),    4),
         "pixeles_validos": int(len(validos)),
+        "tiles_usados":    len(arrays),
     }
 
 
@@ -187,10 +182,16 @@ def procesar_fecha(doy_key: str, tiles: list[tuple], token: str) -> dict | None:
 # Main
 # ----------------------------------------------------------------
 def main():
-    token  = obtener_token(EARTHDATA_USER, EARTHDATA_PASS)
-    urls   = leer_urls(URLS_FILE)
+    # 1. Login
+    token = obtener_token(EARTHDATA_USER, EARTHDATA_PASS)
+
+    # 2. Leer URLs
+    urls = leer_urls(URLS_FILE)
+
+    # 3. Agrupar por fecha
     grupos = agrupar_por_fecha(urls, token)
 
+    # 4. Procesar en paralelo
     print(f"\nProcesando {len(grupos)} fechas con {MAX_WORKERS} hilos...\n")
     resultados = []
     items = list(grupos.items())
@@ -210,17 +211,19 @@ def main():
                 print(f"  {completados}/{len(items)} fechas procesadas "
                       f"({len(resultados)} con datos)...")
 
+    # 5. Construir DataFrame
     df = (
         pd.DataFrame(resultados)
         .sort_values("fecha")
         .reset_index(drop=True)
     )
 
-    out = "ndvi_guanacaste_serie_temporal.csv"
-    df.to_csv(out, index=False)
-    print(f"\nListo: {len(df)} fechas guardadas en '{out}'")
-    print("\nPrimeras filas:")
+    # 6. Guardar
+    df.to_csv(OUTPUT_CSV, index=False)
+    print(f"\nListo: {len(df)} fechas guardadas en '{OUTPUT_CSV}'")
+    print(f"\nPrimeras filas:")
     print(df.head(10).to_string(index=False))
+    print(f"\nRango: {df['fecha'].min()} → {df['fecha'].max()}")
 
 
 if __name__ == "__main__":
