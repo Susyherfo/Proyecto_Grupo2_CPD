@@ -1,0 +1,19 @@
+# Datasets pesados (no versionar en git)
+data_gee/
+dataset_gee_centroamerica_completo.csv
+dataset_limpio.csv
+*.csv
+
+# Checkpoints y archivos temporales de la extracción
+checkpoint.txt
+parcial_*.csv
+
+# Entornos y cachés de Python
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.venv/
+venv/
+
+# Sistema
+.DS_Store

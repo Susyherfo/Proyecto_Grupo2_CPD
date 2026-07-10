@@ -1,0 +1,17 @@
+# --- Extracción de datos (gee_extraccion_centroamerica.py) ---
+earthengine-api==0.1.370
+pandas
+tqdm
+
+# --- Limpieza, modelado y visualización (Limpiar_Dataset.ipynb) ---
+scikit-learn
+matplotlib
+folium
+
+# --- Aceleración GPU (RAPIDS) ---
+# Estas librerías requieren GPU NVIDIA + CUDA y normalmente se instalan
+# vía conda con el canal de RAPIDS, no solo con pip.
+# Guía oficial: https://docs.rapids.ai/install/
+# cudf-cu12
+# cuml-cu12
+# cupy-cuda12x
